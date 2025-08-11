@@ -3,9 +3,22 @@ from .config import StrategyConfig, TrailingSLOnlyConfig, TrailingSLAndTPConfig
 from .trailing import TrailingSLOnly, TrailingSLAndTP
 from .base import TrailingStrategy
 
-def make_strategy(cfg: StrategyConfig) -> TrailingStrategy:
+def make_strategy(cfg):
     if isinstance(cfg, TrailingSLOnlyConfig):
         return TrailingSLOnly()
     if isinstance(cfg, TrailingSLAndTPConfig):
         return TrailingSLAndTP(theta=cfg.theta, rho=cfg.rho)
     raise ValueError(f"Unsupported strategy config: {cfg}")
+
+def make_from_name(name: str | None, params: dict | None = None):
+    if not name:
+        return None
+    params = params or {}
+    if name == "trailing_sl_only":
+        return TrailingSLOnly()
+    if name == "trailing_sl_and_tp":
+        return TrailingSLAndTP(
+            theta=float(params.get("theta", 0.5)),
+            rho=float(params.get("rho", 1.0)),
+        )
+    raise ValueError(f"Unknown strategy name: {name}")

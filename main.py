@@ -8,7 +8,8 @@ from strategy.signal import generate_signal
 from execution.order_manager import OrderManager
 from execution.position_manager import PositionManager
 from config import SYMBOL, TIMEFRAMES, LOOKBACK, POLL_INTERVAL, INVESTMENT_USD, LEVERAGE
-
+import argparse
+from risk.strategies.registry import make_from_name
 # ========== LOGGER ==========
 logging.basicConfig(
     level=logging.INFO,
@@ -20,17 +21,28 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
-
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--strategy", choices=["trailing_sl_only", "trailing_sl_and_tp"], default=STRATEGY)
+    p.add_argument("--theta", type=float, default=None)
+    p.add_argument("--rho", type=float, default=None)
+    return p.parse_args()
 def main():
     # Création du client et résolution du symbole
     exchange = create_exchange()
     ccxt_symbol = resolve_symbol(exchange, SYMBOL)
     logger.info(f"> Utilisation du ticker CCXT : {ccxt_symbol}")
 
+    # 🔹 Instanciation (optionnelle) de la stratégie depuis la config
+    strategy = make_from_name(STRATEGY, STRATEGY_PARAMS)
+    if strategy is None:
+        logger.info("> Stratégie: legacy (SL-only)")
+    else:
+        logger.info(f"> Stratégie: {STRATEGY} params={STRATEGY_PARAMS}")
+
     # Instanciation du PositionManager
     om = OrderManager(exchange, ccxt_symbol)
-    pm = PositionManager(exchange, ccxt_symbol,om)
+    pm = PositionManager(exchange, ccxt_symbol, om, strategy=strategy)
     pm.load_active()
     
     # Chargement historique

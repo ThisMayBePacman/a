@@ -1,7 +1,8 @@
 # path: execution/position_manager.py
 import logging
 import threading
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+from risk.strategies.base import StrategyContext, PositionSnapshot
 from config import TICK_SIZE
 from execution.order_manager import OrderManager
 from risk.sl_tp import calculate_initial_sl_tp
@@ -13,21 +14,13 @@ logger = logging.getLogger(__name__)
 
 
 class PositionManager:
-    def __init__(self, exchange: Any, symbol: str, order_manager: OrderManager):
-        """
-        Initialise le gestionnaire de position pour un symbole donné.
-
-        Args:
-            exchange (Any): Instance de l'API exchange (ex: ccxt) pour récupérer ordres/positions.
-            symbol (str): Symbole de trading géré (ex: 'BTC/USDT').
-            order_manager (OrderManager): Gestionnaire d'ordres associé pour passer/canceller des ordres.
-        """
+    def __init__(self, exchange, symbol, order_manager, strategy: Optional[object] = None):
         self.exchange = exchange
         self.symbol = symbol
         self.om = order_manager
-        self.active: Dict[str, Any] | None = None
-        self._lock = threading.RLock()
-        logger.info(f"PositionManager initialized for {symbol}")
+        self.strategy = strategy
+        self._lock = threading.Lock()
+        self.active = None
 
     @staticmethod
     def opposite(side: str) -> str:
@@ -91,36 +84,29 @@ class PositionManager:
             logger.info("Loaded position: %s %.6f@%s, SL=%s, TP=%s",side, size, entry, sl_price, tp_price)# pragma: no cover
 
     def open_position(self, side: str, entry_price: float, size: float) -> None:
-        """
-        Ouvre une nouvelle position au marché, puis place les ordres SL/TP associés.
-
-        Args:
-            side (str): 'buy' pour position longue, 'sell' pour position courte.
-            entry_price (float): Prix prévu d'entrée (utilisé si prix de remplissage inconnu).
-            size (float): Taille de position (nombre de contrats ou volume).
-
-        Raises:
-            RuntimeError: Si les ordres de protection (SL/TP) n'ont pu être placés (position alors fermée en urgence).
-        """
         with self._lock:
-            # 1) Place market order
             mkt_order = self.om.place_market_order(side, size)
             try:
-                # 2) Calcul des niveaux de SL/TP
                 sltp = calculate_initial_sl_tp(self.exchange, self.symbol, entry_price, side)
-                # 3) Place les ordres de TP et SL
                 tp_order = self.om.place_limit_order(
-                    side=self.opposite(side),
-                    size=size,
-                    price=sltp["tp_price"],
+                    side=self.opposite(side), size=size, price=sltp["tp_price"],
                     params={"reduceOnly": True},
                 )
                 sl_order = self.om.place_stop_limit_order(
-                    side=self.opposite(side),
-                    size=size,
-                    price=sltp["sl_price"],
+                    side=self.opposite(side), size=size, price=sltp["sl_price"],
                     params={"stopPrice": sltp["sl_price"], "reduceOnly": True},
                 )
+                # 🔹 on mémorise le tp_initial pour les stratégies avancées
+                self.active = {
+                    "side": side,
+                    "size": size,
+                    "entry_price": entry_price,
+                    "trail_dist": sltp["trail_dist"],
+                    "tp_price": sltp["tp_price"],
+                    "tp_initial": sltp["tp_price"],  # <— ajouté
+                    "current_sl_price": sltp["sl_price"],
+                    "ids": {"tp": tp_order["id"], "sl": sl_order["id"]},
+                }
             except Exception as e:
                 logger.error(f"Failed to place SL/TP orders: {e}")
                 try:
@@ -128,65 +114,53 @@ class PositionManager:
                 except Exception as ee:
                     logger.critical(f"Emergency exit failed after SL/TP error: {ee}")
                 raise RuntimeError("Failed to open position safely, position closed") from e
-            # 4) Enregistrement de la position active
-            fill_price = float(mkt_order.get("average") or mkt_order.get("price") or entry_price)
-            self.active = {
-                "side": side,
-                "size": float(size),
-                "entry_price": fill_price,
-                "tp_price": float(sltp["tp_price"]),
-                "current_sl_price": float(sltp["sl_price"]),
-                "trail_dist": float(sltp["trail_dist"]),
-                "ids": {"mkt": mkt_order["id"], "tp": tp_order["id"], "sl": sl_order["id"]},
-            }
-            logger.info("Opened position: %s %.6f@%s, SL=%s, TP=%s",side, size, fill_price, sltp["sl_price"], sltp["tp_price"])# pragma: no cover
+    def update_trail(self, df: pd.DataFrame) -> None:
+        if not self.active:
+            return
+        price = float(df["close"].iloc[-1])
+        side = self.active["side"]
+        trail = self.active["trail_dist"]
+        old_sl = self.active["current_sl_price"]
+        old_tp = self.active.get("tp_price")
 
-    def update_trail(self, df5: Any) -> None:
-        """
-        Ajuste le stop loss suiveur (trail) en fonction du dernier prix de clôture.
-        """
-        with self._lock:
-            if not self.active:
-                logger.debug("No active position; skip trail update.")
-                return
-            # Dernier prix de clôture connu
-            price = float(df5.close.iloc[-1])
-            side = self.active["side"]
-            trail = self.active["trail_dist"]
-            old_sl = self.active["current_sl_price"]
+        # 🔹 Si pas de stratégie -> chemin legacy inchangé
+        if not self.strategy:
             if side == "buy":
                 new_sl = align_price(price - trail, TICK_SIZE, mode="down")
-                cond = new_sl > old_sl
+                if new_sl <= old_sl:
+                    return
             else:
                 new_sl = align_price(price + trail, TICK_SIZE, mode="up")
-                cond = new_sl < old_sl
-            if not cond:
-                logger.debug(f"Trail condition unmet: old_sl={old_sl}, computed new_sl={new_sl}")
-                return
-            exit_side = "sell" if side == "buy" else "buy"
-            logger.info(f"Updating SL from {old_sl} to {new_sl}")
-            try:
-                self.exchange.cancel_order(self.active["ids"]["sl"], symbol=self.symbol)
-                logger.debug(f"Cancelled old SL order id={self.active['ids']['sl']}")
-                sl_order = self.exchange.create_order(
-                    self.symbol,
-                    "limit",
-                    exit_side,
-                    self.active["size"],
-                    new_sl,
-                    {"stopPrice": new_sl, "reduceOnly": True},
-                )
-                self.active["ids"]["sl"] = sl_order["id"]
-                self.active["current_sl_price"] = new_sl
-                logger.info(f"Created new SL order id={sl_order['id']} at {new_sl}")
-            except (ccxt.OrderNotFound, ccxt.InvalidOrder):
-                logger.warning("SL order missing or invalid, triggering emergency exit")
-                self._emergency_exit("SL order missing")
-                return
-            except ccxt.BaseError:
-                logger.exception("Failed CCXT update_trail; leaving state unchanged")
-                self._emergency_exit("SL update failure")
-                return
+                if new_sl >= old_sl:
+                    return
+            self._replace_sl(new_sl)
+            return
+
+        # 🔹 Stratégie active : on délègue le calcul
+        snap = PositionSnapshot(
+            entry_price=self.active["entry_price"],
+            current_price=price,
+            qty_open=self.active.get("size", 0.0),
+            qty_remaining=self.active.get("qty_remaining", self.active.get("size", 0.0)),
+            sl_current=self.active.get("current_sl_price"),
+            tp_current=self.active.get("tp_price"),
+            tp_initial=self.active.get("tp_initial"),
+            trail_dist=trail,
+        )
+        ctx = StrategyContext(symbol=self.symbol, side=side, tick_size=TICK_SIZE)
+        desired = self.strategy.compute_targets(snap, ctx)
+
+        # Mise à jour SL (monotone)
+        if side == "buy":
+            if desired.sl_price is not None and desired.sl_price > old_sl:
+                self._replace_sl(desired.sl_price)
+        else:
+            if desired.sl_price is not None and desired.sl_price < old_sl:
+                self._replace_sl(desired.sl_price)
+
+        # Mise à jour TP si différent (stratégie garantit la direction)
+        if desired.tp_price is not None and old_tp is not None and desired.tp_price != old_tp:
+            self._replace_tp(desired.tp_price)
 
     def check_exit(self) -> None:
         """
@@ -320,6 +294,33 @@ class PositionManager:
             finally:
                 self.closing = False
 
+ # Helpers internes
+    def _replace_sl(self, new_sl: float) -> None:
+        try:
+            self.exchange.cancel_order(self.active["ids"]["sl"], self.symbol)
+        except ccxt.BaseError:
+            pass
+        side = self.opposite(self.active["side"])
+        size = self.active["size"]
+        order = self.om.place_stop_limit_order(
+            side=side, size=size, price=new_sl,
+            params={"stopPrice": new_sl, "reduceOnly": True},
+        )
+        self.active["ids"]["sl"] = order["id"]
+        self.active["current_sl_price"] = new_sl
+
+    def _replace_tp(self, new_tp: float) -> None:
+        try:
+            self.exchange.cancel_order(self.active["ids"]["tp"], self.symbol)
+        except ccxt.BaseError:
+            pass
+        side = self.opposite(self.active["side"])
+        size = self.active["size"]
+        order = self.om.place_limit_order(
+            side=side, size=size, price=new_tp, params={"reduceOnly": True}
+        )
+        self.active["ids"]["tp"] = order["id"]
+        self.active["tp_price"] = new_tp
     def _handle_drawdown(self) -> None:
         # Implémentation spécifique pour le drawdown (ex: alertes, réduction de position)
         logger.warning("Drawdown severe détecté - _handle_drawdown non implémenté")# pragma: no cover
