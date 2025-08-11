@@ -1,36 +1,37 @@
+# path: risk/sl_tp.py
 from indicators.compute import compute_indicators
-from data.fetcher import fetch_ohlcv
-from utils.price_utils import align_price
 from data.fetcher import create_exchange, fetch_ohlcv, resolve_symbol
-# Constants (import or define as needed)
+from utils.price_utils import align_price
+from typing import Any, Dict
+
+# Constants (peuvent être redéfinies au besoin)
 TF_M5 = "5m"
 LOOKBACK = 100
 
-def _get_tick_size(exchange, symbol) -> float:
+def _get_tick_size(exchange: Any, symbol: str) -> float:
     """
-    Essaie de déterminer le tick size depuis les métadonnées CCXT.
-    Fallback: utilise la précision décimale si pas de tick explicite.
+    Détermine le tick size minimal pour le symbole via les métadonnées de l'exchange.
+
+    Tente d'abord de lire une valeur explicite de tick (tickSize).
+    Sinon utilise la précision décimale (price precision) ou step si disponible.
     """
     exchange.load_markets()
     m = exchange.market(symbol)
-    # 1) Tick size explicite (souvent présent sur les dérivés)
     tick = (
         (m.get("info") or {}).get("tickSize")
         or m.get("tickSize")
     )
     if tick is not None:
         return float(tick)
-    # 2) Précision décimale -> tick = 10^-precision
     prec = (m.get("precision") or {}).get("price")
     if isinstance(prec, int):
         return 10 ** (-prec)
-    # 3) Dernier recours : limite price.step si dispo
     step = (((m.get("limits") or {}).get("price") or {}).get("step"))
     if step is not None:
         return float(step)
     raise ValueError(f"Impossible de déterminer le tick size pour {symbol}")
  
-def calculate_initial_sl_tp(exchange, symbol, entry_price: float, side: str, atr_multiplier: float = 1.5) -> dict:
+def calculate_initial_sl_tp(exchange: Any, symbol: str, entry_price: float, side: str, atr_multiplier: float = 1.5) -> Dict[str, float]:
     """
     Calcule les prix de Stop Loss (SL) et Take Profit (TP) initiaux
     en fonction de l'ATR14 du timeframe 5m.
@@ -48,7 +49,7 @@ def calculate_initial_sl_tp(exchange, symbol, entry_price: float, side: str, atr
     # 2. Distance de trailing = atr * multiplier
     trail_dist = atr * atr_multiplier
 
-    # 3. Calcul des prix
+    # 3. Calcul des prix bruts
     if side == 'buy':
         sl_raw = entry_price - trail_dist
         tp_raw = entry_price + 2 * trail_dist
@@ -56,10 +57,10 @@ def calculate_initial_sl_tp(exchange, symbol, entry_price: float, side: str, atr
         sl_raw = entry_price + trail_dist
         tp_raw = entry_price - 2 * trail_dist
 
-    # 4. Alignement sur le tick
+    # 4. Alignement sur le tick le plus proche
     tick = _get_tick_size(exchange, symbol)
     # Pour un achat : SL arrondi vers le BAS, TP vers le HAUT (inverse pour une vente)
-    if side == "buy":
+    if side == 'buy':
         sl_price = align_price(sl_raw, tick, mode="down")
         tp_price = align_price(tp_raw, tick, mode="up")
     else:
@@ -67,26 +68,25 @@ def calculate_initial_sl_tp(exchange, symbol, entry_price: float, side: str, atr
         tp_price = align_price(tp_raw, tick, mode="down")
     return { 'sl_price': sl_price, 'tp_price': tp_price, 'trail_dist': trail_dist }
 
-
-def place_sl_tp_orders(exchange, symbol, side: str, size: float, sl_price: float, tp_price: float) -> dict:
+def place_sl_tp_orders(exchange: Any, symbol: str, side: str, size: float, sl_price: float, tp_price: float) -> Dict[str, str]:
     """
-    Passe deux ordres : Stop Limit pour SL et Limit pour TP, en mode reduceOnly.
+    Passe deux ordres de clôture : Stop-Limit (SL) et Limit (TP) en mode reduceOnly.
 
-    :return: ids dict { 'tp': ..., 'sl': ... }
+    :return: dict des IDs d'ordres { 'tp': ..., 'sl': ... }
     """
     reduce_side = 'sell' if side == 'buy' else 'buy'
 
-    # Création de l'ordre TP
+    # Création de l'ordre TP (limit reduceOnly)
     tp_order = exchange.create_order(
-        symbol, 
-        'limit', 
-        reduce_side, 
-        size, 
-        tp_price, 
+        symbol,
+        'limit',
+        reduce_side,
+        size,
+        tp_price,
         { 'reduceOnly': True }
     )
 
-    # Création de l'ordre SL (stop limit)
+    # Création de l'ordre SL (stop-limit reduceOnly)
     sl_order = exchange.create_order(
         symbol,
         'limit',
