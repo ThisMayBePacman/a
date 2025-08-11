@@ -4,7 +4,7 @@ from typing import Optional
 from .base import TrailingStrategy, StrategyContext, PositionSnapshot, DesiredState
 from utils.price_utils import align_price
 
-@dataclass
+@dataclass(frozen=True)
 class TrailingSLOnly(TrailingStrategy):
     """
     Trailing stop simple: on remonte (long) / on abaisse (short) le SL avec une distance fixe.
@@ -35,7 +35,7 @@ class TrailingSLOnly(TrailingStrategy):
         # Pas d’état interne à maintenir dans ce squelette
         return
 
-@dataclass
+@dataclass(frozen=True)
 class TrailingSLAndTP(TrailingStrategy):
     """
     Trailing SL + bump éventuel du TP:
@@ -97,3 +97,13 @@ class TrailingSLAndTP(TrailingStrategy):
     def on_fill(self, snap, fill) -> None:
         # Rien à persister ici : la quantité restante/ordres seront lus depuis l’exchange par le PM.
         return
+@dataclass(frozen=True)
+class TrailingSLOnlyConfig:
+    """Configuration vide pour le trailing simple (SL uniquement)."""
+    pass
+
+@dataclass(frozen=True)
+class TrailingSLAndTPConfig:
+    """Configuration pour le trailing SL + bump TP."""
+    theta: float = 0.5
+    rho: float = 1.0
