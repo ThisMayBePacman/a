@@ -1,13 +1,12 @@
-# risk/rules.py
-
+# path: risk/rules.py
 from typing import Callable
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Chaque règle est un dict avec :
-# - une fonction `condition(state, price)` qui retourne True quand on doit réagir
-# - une fonction `action(state)` qui réalise l’opération de secours ou d’alerte
+# Chaque règle est un dict contenant :
+# - 'condition': Callable[[state, price], bool] déclenchant l'action quand True
+# - 'action': Callable[[state], None] à exécuter en cas de déclenchement
 
 RULES = {
     'sl_breach': {
@@ -34,9 +33,8 @@ RULES = {
             and state.active['side'] == 'sell'
             and price <= state.tp_price
         ),
-        'action': lambda state: state.logger.info("TP breach: on laisse le TP limite se remplir")
+        'action': lambda state: logger.info("TP breach: on laisse le TP limite se remplir")
     },
-    # Exemple futur : détection de drawdown extrême
     'max_drawdown': {
         'condition': lambda state, price: (
             state.active is not None
@@ -44,6 +42,5 @@ RULES = {
             and (state.entry_price - price) / state.entry_price > 0.02
         ),
         'action': lambda state: state._handle_drawdown()
-    },
-    # Vous pouvez continuer à ajouter autant de règles que nécessaire
+    }
 }
