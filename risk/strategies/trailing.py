@@ -63,40 +63,32 @@ class TrailingSLAndTP(TrailingStrategy):
         entry = snap.entry_price
         tp0 = snap.tp_initial
         tp_current = snap.tp_current or tp0
-
         if side == "buy":
-            # 1) SL trailing
-            sl_new = max(snap.sl_current or (entry - dist), price - dist)
-            sl_new = align_price(sl_new, ctx.tick_size, mode="up")
+            sl_cand = align_price(price - dist, tick, mode="down")
+            if current_sl is not None:
+                sl_cand = max(sl_cand, current_sl)  # monotone ↑ for long
 
-            # 2) Bump TP éventuel
-            sl_threshold = entry + self.theta * (tp0 - entry)
-            tp_new = tp_current
-            if sl_new >= sl_threshold:
-                bump = self.rho * (sl_new - sl_threshold)
-                tp_new = max(tp_current, tp_current + bump)
-                tp_new = align_price(tp_new, ctx.tick_size, mode="up")
+            threshold = entry + self.theta * (tp0 - entry)
+            tp_next = current_tp
+            if sl_cand >= threshold:
+                bump = self.rho * (sl_cand - threshold)
+                tp_next = align_price(current_tp + bump, tick, mode="up")
 
-        else:  # sell
-            sl_new = min(snap.sl_current or (entry + dist), price + dist)
-            sl_new = align_price(sl_new, ctx.tick_size, mode="down")
+            return DesiredState(sl_price=sl_cand, tp_price=tp_next, debug=dbg)
 
-            sl_threshold = entry - self.theta * (entry - tp0)  # tp0 < entry en short
-            tp_new = tp_current
-            if sl_new <= sl_threshold:
-                bump = self.rho * (sl_threshold - sl_new)
-                tp_new = min(tp_current, tp_current - bump)
-                tp_new = align_price(tp_new, ctx.tick_size, mode="down")
+        else:  # side == "sell"
+            # FIX: trail SL below price for short (+ mirror threshold/bump direction)
+            sl_cand = align_price(price - dist, tick, mode="down")
+            if current_sl is not None:
+                sl_cand = min(sl_cand, current_sl)  # monotone ↓ for short
 
-        return DesiredState(
-            sl_price=sl_new,
-            tp_price=tp_new,
-            debug={
-                "kind": "TrailingSLAndTP",
-                "theta": self.theta,
-                "rho": self.rho,
-            },
-        )
+            threshold = entry - self.theta * (entry - tp0)  # e.g., 90 when entry=100, tp0=80, θ=0.5
+            tp_next = current_tp
+            if sl_cand <= threshold:
+                bump = self.rho * (threshold - sl_cand)
+                tp_next = align_price(current_tp - bump, tick, mode="down")
+
+            return DesiredState(sl_price=sl_cand, tp_price=tp_next, debug=dbg)
 
     def on_fill(self, snap, fill) -> None:
         # Rien à persister ici : la quantité restante/ordres seront lus depuis l’exchange par le PM.
