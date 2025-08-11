@@ -93,8 +93,7 @@ class TrailingSLAndTP(TrailingStrategy):
                 bump = self.rho * (threshold - sl_cand)
                 tp_next = align_price(current_tp - bump, tick, mode="down")
 
-            return DesiredState(sl_price=sl_cand, tp_price=tp_next, debug=dbg)eturn DesiredState(sl_price=sl_cand, tp_price=tp_next, debug=dbg)
-
+            return DesiredState(sl_price=sl_cand, tp_price=tp_next, debug=dbg)
     def on_fill(self, snap, fill) -> None:
         # Rien à persister ici : la quantité restante/ordres seront lus depuis l’exchange par le PM.
         return
