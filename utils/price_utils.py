@@ -9,40 +9,31 @@ def compute_size(investment_usd, leverage, price):
     return investment_usd * leverage / price
 
 def align_price(p: float, tick: float, mode: Literal["down", "up"]) -> float:
-    """
-    Aligne p sur la grille 'tick' en évitant les effets float.
-    - 'down' : plus petit multiple <= p (avec zone de snap autour des multiples)
-    - 'up'   : plus grand multiple >= p (avec zone de snap)
-    Idempotent: un 2e alignement ne bouge pas de > 1 tick.
-    """
     if tick <= 0:
         raise ValueError("tick must be > 0")
     if mode not in ("down", "up"):
         raise ValueError("mode must be 'down' or 'up'")
 
-    step = Decimal(str(tick))             # ex: '1e-06'
-    d = Decimal(str(p))                   # entrée stabilisée
+    step = Decimal(str(tick))
+    d = Decimal(str(p))
 
-    q = d / step                          # p en unités de tick
+    q = d / step
     q_floor = q.to_integral_value(rounding=ROUND_FLOOR)
-    rem = q - q_floor                     # reste dans [0, 1)
+    q_ceil = q_floor if q == q_floor else q_floor + 1
+    rem = q - q_floor  # in [0,1)
 
-    # Tolérance en "unités de tick" plus large que la dérive float observée (~2e-4 tick)
-    # pour "snapper" une valeur quasi-alignée.
-    snap_units = Decimal("1e-3")          # 0.001 tick
+    # Epsilon absolue max(1e-12, tick*5e-7) convertie en unités de tick
+    eps_abs = max(1e-12, float(step) * 5e-7)
+    eps_units = Decimal(str(eps_abs)) / step  # très petit, ~1e-6 de tick
 
-    # Si déjà quasi sur un multiple → snap au multiple le plus proche
-    if rem <= snap_units:
-        n = q_floor
-    elif (Decimal(1) - rem) <= snap_units:
-        n = q_floor + 1
-    else:
-        # Sinon respect strict de la direction
-        if mode == "down":
-            n = q_floor
-        else:  # 'up'
-            n = q.to_integral_value(rounding=ROUND_CEILING)
+    if mode == "down":
+        # si on est quasi au multiple supérieur, on accepte de « snap up » seulement
+        # si l'écart est < eps (sinon on reste floor)
+        n = q_ceil if (Decimal(1) - rem) <= eps_units else q_floor
+    else:  # mode == "up"
+        # si on est quasi au multiple inférieur, on « snap down » seulement si < eps
+        # (sinon on respecte la direction et on prend ceil)
+        n = q_floor if rem <= eps_units else q_ceil
 
-    # Résultat exactement sur la grille, puis conversion float
     res = (n * step).quantize(step, rounding=ROUND_HALF_UP)
     return float(res)
