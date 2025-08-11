@@ -6,7 +6,7 @@ load_dotenv()
 API_KEY    = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 SYMBOL = "PF_ETHUSD"
-INVESTMENT_USD = 12
+INVESTMENT_USD = 10
 LEVERAGE = 8
 TIMEFRAMES = { 'M15': '15m', 'M5': '5m' }
 LOOKBACK = 100
