@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\execution\position_manager.py
+# hypothesis_version: 6.137.2
+
+[0.0, 'action', 'buy', 'close', 'closing', 'condition', 'contracts', 'current_sl_price', 'down', 'entryPrice', 'entry_price', 'id', 'ids', 'info', 'params', 'price', 'qty_remaining', 'reduceOnly', 'sell', 'side', 'size', 'sl', 'sl_price', 'stopPrice', 'symbol', 'tp', 'tp_initial', 'tp_price', 'trail_dist', 'up']

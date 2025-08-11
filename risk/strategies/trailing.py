@@ -3,7 +3,17 @@ from dataclasses import dataclass
 from typing import Optional
 from .base import TrailingStrategy, StrategyContext, PositionSnapshot, DesiredState
 from utils.price_utils import align_price
+# --- NEW: simple config dtos ---
+@dataclass(frozen=True)
+class TrailingSLOnlyConfig:
+    name: str = "trailing_sl_only"
 
+@dataclass(frozen=True)
+class TrailingSLAndTPConfig:
+    name: str = "trailing_sl_and_tp"
+    theta: float = 0.5
+    rho: float = 1.0
+# --------------------------------
 @dataclass(frozen=True)
 class TrailingSLOnly(TrailingStrategy):
     """

@@ -3,15 +3,24 @@ from .config import StrategyConfig, TrailingSLOnlyConfig, TrailingSLAndTPConfig
 from .trailing import TrailingSLOnly, TrailingSLAndTP, TrailingSLOnlyConfig, TrailingSLAndTPConfig
 from .base import TrailingStrategy
 
-def make_strategy(cfg):
-    if isinstance(cfg, TrailingSLOnlyConfig) or cfg == "trailing_sl_only":
+def make_strategy(cfg_or_name="trailing_sl_only", **kwargs):
+    # Cas 1: objets config
+    if isinstance(cfg_or_name, TrailingSLOnlyConfig):
         return TrailingSLOnly()
-    if isinstance(cfg, TrailingSLAndTPConfig) or cfg == "trailing_sl_and_tp":
-        if isinstance(cfg, TrailingSLAndTPConfig):
-            return TrailingSLAndTP(theta=cfg.theta, rho=cfg.rho)
-        return TrailingSLAndTP()
-    raise ValueError(f"Unknown strategy config: {cfg!r}")
+    if isinstance(cfg_or_name, TrailingSLAndTPConfig):
+        return TrailingSLAndTP(theta=cfg_or_name.theta, rho=cfg_or_name.rho)
 
+    # Cas 2: nom + kwargs
+    if isinstance(cfg_or_name, str):
+        name = cfg_or_name
+        if name == "trailing_sl_only":
+            return TrailingSLOnly()
+        if name == "trailing_sl_and_tp":
+            theta = float(kwargs.get("theta", 0.5))
+            rho = float(kwargs.get("rho", 1.0))
+            return TrailingSLAndTP(theta=theta, rho=rho)
+
+    raise ValueError(f"Unknown strategy config/name: {cfg_or_name!r}")
 def make_from_name(name: str | None, params: dict | None = None):
     if not name:
         return None
