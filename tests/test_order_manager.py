@@ -1,52 +1,14 @@
+# path: tests/test_order_manager.py
 import pytest
-from execution.order_manager import OrderManager
 
-class DummyExchange:
-    def __init__(self):
-        self.last_args = None
-        self.orders = {}
-        self.cancelled = set()
-        self.order_id = 0
-
-    def create_order(self, symbol, type, side, amount, price=None, params=None):
-        self.order_id += 1
-        order = {
-            'id': str(self.order_id),
-            'symbol': symbol,
-            'type': type,
-            'side': side,
-            'amount': amount,
-            'price': price,
-            'params': params or {},
-            'status': 'open'
-        }
-        self.orders[order['id']] = order
-        self.last_args = (symbol, type, side, amount, price, params)
-        return order
-
-    def cancel_order(self, order_id, symbol):
-        if order_id not in self.orders:
-            raise Exception("Order not found")
-        self.orders[order_id]['status'] = 'canceled'
-        self.cancelled.add(order_id)
-        return {'id': order_id, 'status': 'canceled'}
-
-@pytest.fixture
-def dummy_exchange():
-    return DummyExchange()
-
-@pytest.fixture
-def order_manager(dummy_exchange):
-    return OrderManager(dummy_exchange, "BTC/USDT")
-
-def test_place_market_order_success(order_manager, dummy_exchange):
+def test_place_market_order_success(order_manager):
     order = order_manager.place_market_order("buy", 0.1)
     assert order['type'] == 'market'
     assert order['side'] == 'buy'
     assert order['amount'] == 0.1
     assert order['symbol'] == "BTC/USDT"
 
-def test_place_market_order_with_leverage(order_manager, dummy_exchange):
+def test_place_market_order_with_leverage(order_manager):
     order = order_manager.place_market_order("sell", 0.2, leverage=3)
     assert order['params']['leverage'] == 3
 
@@ -100,4 +62,4 @@ def test_cancel_order_invalid(order_manager):
     with pytest.raises(ValueError):
         order_manager.cancel_order("")
     with pytest.raises(Exception):
-        order_manager.cancel_order("99999")  # Not existent
+        order_manager.cancel_order("99999")
