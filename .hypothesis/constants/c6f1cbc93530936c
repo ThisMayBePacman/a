@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\execution\position_manager.py
+# hypothesis_version: 6.137.2
+
+[0.0, 'SL order missing', 'SL update failure', 'action', 'average', 'buy', 'closing', 'condition', 'contracts', 'current_sl_price', 'down', 'entryPrice', 'entry_price', 'id', 'ids', 'info', 'limit', 'mkt', 'params', 'price', 'reduceOnly', 'sell', 'side', 'size', 'sl', 'sl_price', 'stopPrice', 'symbol', 'tp', 'tp_price', 'trail_dist', 'up']
