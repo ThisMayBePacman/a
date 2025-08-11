@@ -54,19 +54,24 @@ class TrailingSLAndTP(TrailingStrategy):
 
     def compute_targets(self, snap: PositionSnapshot, ctx: StrategyContext) -> DesiredState:
         if snap.tp_initial is None:
-            # Sans TP initial de référence, on se comporte comme un trailing simple
             return TrailingSLOnly().compute_targets(snap, ctx)
 
+        # ✅ normalisation des alias locaux
+        tick = ctx.tick_size
         side = ctx.side
-        price = snap.current_price
-        dist = snap.trail_dist
-        entry = snap.entry_price
-        tp0 = snap.tp_initial
-        tp_current = snap.tp_current or tp0
+        price = float(snap.current_price)
+        dist = float(snap.trail_dist)
+        entry = float(snap.entry_price)
+        tp0 = float(snap.tp_initial)
+        current_sl = snap.sl_current
+        current_tp = snap.tp_current if snap.tp_current is not None else tp0
+
+        dbg = {"kind": "TrailingSLAndTP", "theta": self.theta, "rho": self.rho}
+
         if side == "buy":
             sl_cand = align_price(price - dist, tick, mode="down")
             if current_sl is not None:
-                sl_cand = max(sl_cand, current_sl)  # monotone ↑ for long
+                sl_cand = max(sl_cand, current_sl)  # SL monotone ↑
 
             threshold = entry + self.theta * (tp0 - entry)
             tp_next = current_tp
@@ -76,19 +81,19 @@ class TrailingSLAndTP(TrailingStrategy):
 
             return DesiredState(sl_price=sl_cand, tp_price=tp_next, debug=dbg)
 
-        else:  # side == "sell"
-            # FIX: trail SL below price for short (+ mirror threshold/bump direction)
+        else:  # "sell"
+            # miroir côté short
             sl_cand = align_price(price - dist, tick, mode="down")
             if current_sl is not None:
-                sl_cand = min(sl_cand, current_sl)  # monotone ↓ for short
+                sl_cand = min(sl_cand, current_sl)  # SL monotone ↓
 
-            threshold = entry - self.theta * (entry - tp0)  # e.g., 90 when entry=100, tp0=80, θ=0.5
+            threshold = entry - self.theta * (entry - tp0)
             tp_next = current_tp
             if sl_cand <= threshold:
                 bump = self.rho * (threshold - sl_cand)
                 tp_next = align_price(current_tp - bump, tick, mode="down")
 
-            return DesiredState(sl_price=sl_cand, tp_price=tp_next, debug=dbg)
+            return DesiredState(sl_price=sl_cand, tp_price=tp_next, debug=dbg)eturn DesiredState(sl_price=sl_cand, tp_price=tp_next, debug=dbg)
 
     def on_fill(self, snap, fill) -> None:
         # Rien à persister ici : la quantité restante/ordres seront lus depuis l’exchange par le PM.
