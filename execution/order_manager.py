@@ -68,7 +68,9 @@ class OrderManager:
             params=final_params,
         )
         logger.info(
-            f"Market order response: id={order['id']}, status={order.get('status')}"
+            "Market order response: id=%s, status=%s",
+            order.get("id"),
+            order.get("status"),
         )
         return order
 
@@ -109,7 +111,9 @@ class OrderManager:
             self.symbol, "limit", side, size, price, params
         )
         logger.info(
-            f"Limit order response: id={order['id']}, status={order.get('status')}"
+            "Limit order response: id=%s, status=%s",
+            order.get("id"),
+            order.get("status"),
         )
         return order
 
@@ -158,7 +162,9 @@ class OrderManager:
             self.symbol, "limit", side, size, price, params
         )
         logger.info(
-            f"Stop limit order response: id={order['id']}, status={order.get('status')}"
+            "Stop limit order response: id=%s, status=%s",
+            order.get("id"),
+            order.get("status"),
         )
         return order
 
@@ -178,7 +184,7 @@ class OrderManager:
         """
         if not order_id or not isinstance(order_id, str):
             raise ValueError("order_id must be a non-empty string")
-        logger.info(f"Cancelling order: id={order_id}")
+        logger.info("Cancelling order: id=%s", order_id)
         result = self.exchange.cancel_order(order_id, self.symbol)
-        logger.info(f"Cancel result: {result}")
+        logger.info("Cancel result: id=%s, status=%s", result.get("id"), result.get("status"))
         return result

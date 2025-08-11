@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\execution\order_manager.py
+# hypothesis_version: 6.137.2
+
+['buy', 'id', 'leverage', 'limit', 'market', 'sell', 'status', 'stopPrice']

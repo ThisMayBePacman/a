@@ -2,6 +2,7 @@
 import pytest
 import ccxt
 
+
 class DummyExchange:
     def __init__(self):
         # Track orders and positions by symbol
@@ -15,23 +16,23 @@ class DummyExchange:
         self._order_id += 1
         order_id = str(self._order_id)
         # Determine status: market orders fill immediately (closed), others remain open
-        status = 'closed' if type == 'market' else 'open'
+        status = "closed" if type == "market" else "open"
         # Update position for market orders (immediate execution) or ignore for limit orders
-        if type == 'market':
+        if type == "market":
             # Ensure symbol in positions tracking
             if symbol not in self.positions:
                 self.positions[symbol] = (0.0, None)
             pos_size, entry_price = self.positions[symbol]
-            if params.get('reduceOnly'):
+            if params.get("reduceOnly"):
                 # Reduce existing position without opening opposite
-                if side == 'buy':
+                if side == "buy":
                     # Closing a short position by buying
                     if pos_size < 0:
                         new_size = pos_size + amount
                         if new_size > 0:
                             new_size = 0.0  # do not flip to long in reduceOnly
                         pos_size = new_size
-                elif side == 'sell':
+                elif side == "sell":
                     # Closing a long position by selling
                     if pos_size > 0:
                         new_size = pos_size - amount
@@ -40,7 +41,7 @@ class DummyExchange:
                         pos_size = new_size
             else:
                 # Opening or increasing a position
-                if side == 'buy':
+                if side == "buy":
                     pos_size += amount
                 else:
                     pos_size -= amount
@@ -52,15 +53,21 @@ class DummyExchange:
             self.positions[symbol] = (pos_size, entry_price)
         # Create order record
         order = {
-            'id': order_id,
-            'symbol': symbol,
-            'type': type,
-            'side': side,
-            'amount': amount,
-            'price': price,
-            'params': params,
-            'status': status
+            "id": order_id,
+            "symbol": symbol,
+            "type": type,
+            "side": side,
+            "amount": amount,
+            "price": price,
+            "params": params,
+            "status": status,
         }
+        # Expose stopPrice like many exchanges (top-level + info)
+        if "stopPrice" in params:
+            order["stopPrice"] = params["stopPrice"]
+            order["info"] = {"stopPrice": params["stopPrice"]}
+        else:
+            order["info"] = {}
         self.orders[order_id] = order
         return order
 
@@ -70,15 +77,15 @@ class DummyExchange:
             # Simulate ccxt OrderNotFound exception
             raise ccxt.OrderNotFound("Order not found")
         # Mark as canceled
-        self.orders[order_id]['status'] = 'canceled'
+        self.orders[order_id]["status"] = "canceled"
         self.cancelled.add(order_id)
-        return { 'id': order_id, 'status': 'canceled' }
+        return {"id": order_id, "status": "canceled"}
 
     def fetch_open_orders(self, symbol=None):
         # Return orders still open (not filled or canceled)
-        orders = [o for o in self.orders.values() if o['status'] == 'open']
+        orders = [o for o in self.orders.values() if o["status"] == "open"]
         if symbol:
-            orders = [o for o in orders if o['symbol'] == symbol]
+            orders = [o for o in orders if o["symbol"] == symbol]
         return orders
 
     def fetch_positions(self, symbols=None):
@@ -89,14 +96,19 @@ class DummyExchange:
             if sym in self.positions:
                 contracts, entry_price = self.positions[sym]
                 if abs(contracts) > 1e-9:
-                    positions_list.append({ 'symbol': sym, 'contracts': str(contracts), 'entryPrice': entry_price or 0.0 })
+                    positions_list.append(
+                        {"symbol": sym, "contracts": str(contracts), "entryPrice": entry_price or 0.0}
+                    )
         return positions_list
+
 
 @pytest.fixture
 def dummy_exchange():
     return DummyExchange()
 
+
 @pytest.fixture
 def order_manager(dummy_exchange):
     from execution.order_manager import OrderManager
+
     return OrderManager(dummy_exchange, "BTC/USDT")
