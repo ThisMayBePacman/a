@@ -1,16 +1,17 @@
-# path: execution/position_manager.py
+# execution/position_manager.py
 import logging
 import threading
 from typing import Any, Dict, Optional
+
+import ccxt
+import pandas as pd
+
 from risk.strategies.base import StrategyContext, PositionSnapshot
 from config import TICK_SIZE
 from execution.order_manager import OrderManager
 from risk.sl_tp import calculate_initial_sl_tp
 from risk.rules import RULES
 from utils.price_utils import align_price
-import ccxt
-import pandas as pd
-import threading
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +33,6 @@ class PositionManager:
         return "sell" if s == "buy" else "buy"
 
     def load_active(self) -> None:
-        """
-        Charge la position active depuis l'exchange et met à jour self.active.
-        """
         with self._lock:
             logger.debug("Loading active position")
             try:
@@ -81,33 +79,63 @@ class PositionManager:
                 "tp_price": tp_price,
                 "current_sl_price": sl_price,
                 "trail_dist": trail_dist,
-                "ids": {"sl": sl_orders[0]["id"], "tp": tp_orders[0]["id"]},
+                "ids": {
+                    "sl": sl_orders[0]["id"],
+                    "tp": tp_orders[0]["id"],
+                    # pas d’info mkt lors d’un reload
+                },
+                # utile aux stratégies si rechargé
+                "tp_initial": tp_price,
             }
-            logger.info("Loaded position: %s %.6f@%s, SL=%s, TP=%s",side, size, entry, sl_price, tp_price)# pragma: no cover
+            logger.info("Loaded position: %s %.6f@%s, SL=%s, TP=%s", side, size, entry, sl_price, tp_price)  # pragma: no cover
 
     def open_position(self, side: str, entry_price: float, size: float) -> None:
         with self._lock:
+            # 1) Ordre marché
             mkt_order = self.om.place_market_order(side, size)
+            mkt_id = (mkt_order or {}).get("id")
+            fill_price = (
+                (mkt_order or {}).get("average")
+                or (mkt_order or {}).get("price")
+                or entry_price
+            )
+
             try:
-                sltp = calculate_initial_sl_tp(self.exchange, self.symbol, entry_price, side)
+                # 2) Calcul SL/TP basé sur le vrai prix de remplissage
+                sltp = calculate_initial_sl_tp(self.exchange, self.symbol, float(fill_price), side)
+
+                # 3) Placement des ordres de protection
                 tp_order = self.om.place_limit_order(
-                    side=self.opposite(side), size=size, price=sltp["tp_price"],
+                    side=self.opposite(side),
+                    size=size,
+                    price=sltp["tp_price"],
                     params={"reduceOnly": True},
                 )
                 sl_order = self.om.place_stop_limit_order(
-                    side=self.opposite(side), size=size, price=sltp["sl_price"],
+                    side=self.opposite(side),
+                    size=size,
+                    price=sltp["sl_price"],
                     params={"stopPrice": sltp["sl_price"], "reduceOnly": True},
                 )
-                # 🔹 on mémorise le tp_initial pour les stratégies avancées
+
+                sl_order_price = float(sltp["sl_price"])
+                tp_order_price = float(sltp["tp_price"])
+
+                # 4) État actif
                 self.active = {
                     "side": side,
                     "size": size,
-                    "entry_price": entry_price,
+                    "entry_price": float(fill_price),
+                    "current_sl_price": sl_order_price,
+                    "tp_price": tp_order_price,
                     "trail_dist": sltp["trail_dist"],
-                    "tp_price": sltp["tp_price"],
-                    "tp_initial": sltp["tp_price"],  # <— ajouté
-                    "current_sl_price": sltp["sl_price"],
-                    "ids": {"tp": tp_order["id"], "sl": sl_order["id"]},
+                    "ids": {
+                        "mkt": mkt_id,
+                        "tp": (tp_order or {}).get("id"),
+                        "sl": (sl_order or {}).get("id"),
+                    },
+                    # utile pour bump TP
+                    "tp_initial": tp_order_price,
                 }
             except Exception as e:
                 logger.error(f"Failed to place SL/TP orders: {e}")
@@ -116,6 +144,7 @@ class PositionManager:
                 except Exception as ee:
                     logger.critical(f"Emergency exit failed after SL/TP error: {ee}")
                 raise RuntimeError("Failed to open position safely, position closed") from e
+
     def update_trail(self, df: pd.DataFrame) -> None:
         if not self.active:
             return
@@ -125,7 +154,7 @@ class PositionManager:
         old_sl = self.active["current_sl_price"]
         old_tp = self.active.get("tp_price")
 
-        # 🔹 Si pas de stratégie -> chemin legacy inchangé
+        # Sans stratégie : legacy trailing
         if not self.strategy:
             if side == "buy":
                 new_sl = align_price(price - trail, TICK_SIZE, mode="down")
@@ -138,7 +167,7 @@ class PositionManager:
             self._replace_sl(new_sl)
             return
 
-        # 🔹 Stratégie active : on délègue le calcul
+        # Avec stratégie
         snap = PositionSnapshot(
             entry_price=self.active["entry_price"],
             current_price=price,
@@ -152,7 +181,7 @@ class PositionManager:
         ctx = StrategyContext(symbol=self.symbol, side=side, tick_size=TICK_SIZE)
         desired = self.strategy.compute_targets(snap, ctx)
 
-        # Mise à jour SL (monotone)
+        # SL monotone
         if side == "buy":
             if desired.sl_price is not None and desired.sl_price > old_sl:
                 self._replace_sl(desired.sl_price)
@@ -160,14 +189,11 @@ class PositionManager:
             if desired.sl_price is not None and desired.sl_price < old_sl:
                 self._replace_sl(desired.sl_price)
 
-        # Mise à jour TP si différent (stratégie garantit la direction)
+        # TP si changement
         if desired.tp_price is not None and old_tp is not None and desired.tp_price != old_tp:
             self._replace_tp(desired.tp_price)
 
     def check_exit(self) -> None:
-        """
-        Vérifie si la position a été fermée ou si SL/TP ont été exécutés.
-        """
         with self._lock:
             if not self.active:
                 logger.debug("No active position; skip exit check.")
@@ -195,7 +221,6 @@ class PositionManager:
             open_ids = {o["id"] for o in opens}
             ids = self.active.get("ids", {})
             if ids.get("sl") not in open_ids and ids.get("tp") not in open_ids:
-                # Plus aucun ordre de protection ouvert
                 logger.warning("Position still open but SL/TP orders missing - emergency exit")
                 self._emergency_exit("missing protective orders")
                 return
@@ -209,9 +234,6 @@ class PositionManager:
         return self.active.get("tp_price") if self.active else None
 
     def watchdog(self, current_price: float) -> None:
-        """
-        Parcourt les règles de risque et exécute l'action associée si une condition est remplie.
-        """
         with self._lock:
             for name, rule in RULES.items():
                 try:
@@ -222,10 +244,6 @@ class PositionManager:
                     logger.error(f"Error in watchdog rule `{name}`: {e}")
 
     def _purge_stale_reduce_only(self, side: str) -> None:
-        """
-        Annule les ordres `reduceOnly` encore ouverts du côté donné.
-        Détecte reduceOnly dans o['reduceOnly'], o['info']['reduceOnly'] ou o['params']['reduceOnly'].
-        """
         try:
             opens = self.exchange.fetch_open_orders(symbol=self.symbol)
         except Exception as e:
@@ -235,9 +253,7 @@ class PositionManager:
         def _is_reduce(o: Dict[str, Any]) -> bool:
             info = o.get("info") or {}
             params = o.get("params") or {}
-            return bool(
-                o.get("reduceOnly") or info.get("reduceOnly") or params.get("reduceOnly")
-            )
+            return bool(o.get("reduceOnly") or info.get("reduceOnly") or params.get("reduceOnly"))
 
         for o in opens:
             if o.get("side") == side and _is_reduce(o):
@@ -278,7 +294,6 @@ class PositionManager:
             self.closing = True
             try:
                 logger.error(f"Emergency exit triggered due to {reason}")
-                # Si déjà flat, ne rien faire
                 if self._position_contracts() == 0.0:
                     logger.info("Already flat — skip emergency market")
                     self._cancel_all_open()
@@ -286,22 +301,21 @@ class PositionManager:
                     return
                 exit_side = "sell" if self._position_contracts() > 0 else "buy"
                 qty = abs(self._position_contracts() or (self.active and self.active["size"]) or 0.0)
-                # Annule les ordres reduceOnly existants du côté choisi
                 self._purge_stale_reduce_only(exit_side)
-                # Envoi d'un ordre marché en reduceOnly pour fermer la position
                 self.om.place_market_order(exit_side, qty, params={"reduceOnly": True})
-                # Annule tous les ordres restants
                 self._cancel_all_open()
                 self.active = None
             finally:
                 self.closing = False
 
- # Helpers internes
+    # Helpers internes
     def _replace_sl(self, new_sl: float) -> None:
         try:
             self.exchange.cancel_order(self.active["ids"]["sl"], self.symbol)
-        except ccxt.BaseError:
-            pass
+        except (ccxt.BaseError, ccxt.OrderNotFound) as e:
+            logger.error(f"cancel_order failed for SL {self.active['ids'].get('sl')}: {e}")
+            self._emergency_exit("cancel SL failed")
+            return
         side = self.opposite(self.active["side"])
         size = self.active["size"]
         order = self.om.place_stop_limit_order(
@@ -314,8 +328,10 @@ class PositionManager:
     def _replace_tp(self, new_tp: float) -> None:
         try:
             self.exchange.cancel_order(self.active["ids"]["tp"], self.symbol)
-        except ccxt.BaseError:
-            pass
+        except (ccxt.BaseError, ccxt.OrderNotFound) as e:
+            logger.error(f"cancel_order failed for TP {self.active['ids'].get('tp')}: {e}")
+            self._emergency_exit("cancel TP failed")
+            return
         side = self.opposite(self.active["side"])
         size = self.active["size"]
         order = self.om.place_limit_order(
@@ -323,6 +339,6 @@ class PositionManager:
         )
         self.active["ids"]["tp"] = order["id"]
         self.active["tp_price"] = new_tp
+
     def _handle_drawdown(self) -> None:
-        # Implémentation spécifique pour le drawdown (ex: alertes, réduction de position)
-        logger.warning("Drawdown severe détecté - _handle_drawdown non implémenté")# pragma: no cover
+        logger.warning("Drawdown severe détecté - _handle_drawdown non implémenté")  # pragma: no cover

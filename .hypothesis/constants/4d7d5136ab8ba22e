@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\risk\strategies\trailing.py
+# hypothesis_version: 6.137.2
+
+[0.5, 1.0, 'TrailingSLAndTP', 'TrailingSLOnly', 'buy', 'down', 'kind', 'rho', 'theta', 'trailing_sl_and_tp', 'trailing_sl_only', 'up']
