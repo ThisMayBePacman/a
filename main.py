@@ -7,9 +7,11 @@ from strategy.signal import generate_signal
 # plus besoin de place_market_order direct
 from execution.order_manager import OrderManager
 from execution.position_manager import PositionManager
-from config import SYMBOL, TIMEFRAMES, LOOKBACK, POLL_INTERVAL, INVESTMENT_USD, LEVERAGE
+from config import SYMBOL, TIMEFRAMES, LOOKBACK, POLL_INTERVAL, INVESTMENT_USD, LEVERAGE, STRATEGY, STRATEGY_PARAMS
 import argparse
 from risk.strategies.registry import make_from_name
+
+
 # ========== LOGGER ==========
 logging.basicConfig(
     level=logging.INFO,
@@ -21,24 +23,52 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("--strategy", choices=["trailing_sl_only", "trailing_sl_and_tp"], default=STRATEGY)
-    p.add_argument("--theta", type=float, default=None)
-    p.add_argument("--rho", type=float, default=None)
-    return p.parse_args()
+def _parse_args():
+    parser = argparse.ArgumentParser(description="Bot trading")
+    parser.add_argument(
+        "--strategy",
+        choices=["trailing_sl_only", "trailing_sl_and_tp", "none", "legacy"],
+        default=None,
+        help="Nom de la stratégie. 'none'/'legacy' = trailing historique par défaut."
+    )
+    parser.add_argument(
+        "--theta",
+        type=float,
+        default=None,
+        help="Seuil (0–1) pour trailing_sl_and_tp (ex: 0.5)."
+    )
+    parser.add_argument(
+        "--rho",
+        type=float,
+        default=None,
+        help="Multiplicateur >= 0 pour bump TP (ex: 1.0)."
+    )
+    return parser.parse_args()
 def main():
     # Création du client et résolution du symbole
     exchange = create_exchange()
     ccxt_symbol = resolve_symbol(exchange, SYMBOL)
     logger.info(f"> Utilisation du ticker CCXT : {ccxt_symbol}")
+      # 🔸 CLI overrides
+    args = _parse_args()
+    # stratégie finale = CLI > config.py
+    if args.strategy in (None, "none", "legacy"):
+        strategy_name = STRATEGY  # peut être None
+    else:
+        strategy_name = args.strategy
 
-    # 🔹 Instanciation (optionnelle) de la stratégie depuis la config
-    strategy = make_from_name(STRATEGY, STRATEGY_PARAMS)
+    # paramètres finaux = config.py puis overrides CLI s'ils sont fournis
+    params = dict(STRATEGY_PARAMS or {})
+    if args.theta is not None:
+        params["theta"] = args.theta
+    if args.rho is not None:
+        params["rho"] = args.rho
+
+    strategy = make_from_name(strategy_name, params)
     if strategy is None:
         logger.info("> Stratégie: legacy (SL-only)")
     else:
-        logger.info(f"> Stratégie: {STRATEGY} params={STRATEGY_PARAMS}")
+        logger.info(f"> Stratégie: {strategy_name} params={params}")
 
     # Instanciation du PositionManager
     om = OrderManager(exchange, ccxt_symbol)
