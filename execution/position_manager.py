@@ -10,7 +10,7 @@ from risk.rules import RULES
 from utils.price_utils import align_price
 import ccxt
 import pandas as pd
-
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ class PositionManager:
         self.symbol = symbol
         self.om = order_manager
         self.strategy = strategy
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self.active = None
 
     @staticmethod
