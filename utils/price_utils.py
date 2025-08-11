@@ -1,6 +1,7 @@
 # utils/price_utils.py
 import math
-from decimal import Decimal, ROUND_FLOOR, ROUND_CEILING, getcontext
+from decimal import Decimal, getcontext, ROUND_FLOOR, ROUND_CEILING, ROUND_HALF_UP
+
 from typing import Literal
 getcontext().prec = 34
 def compute_size(investment_usd, leverage, price):
