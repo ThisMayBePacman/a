@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\strategy\signal.py
+# hypothesis_version: 6.137.2
+
+['cross', 'down', 'long', 'mom', 'neutral', 'rsi', 'short', 'up', 'vol_ok']
