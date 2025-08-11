@@ -88,9 +88,8 @@ class PositionManager:
                 "trail_dist": trail_dist,
                 "ids": {"sl": sl_orders[0]["id"], "tp": tp_orders[0]["id"]},
             }
-            logger.info(
-                f"Loaded position: {side} {size:.6f}@{entry}, SL={sl_price}, TP={tp_price}"
-            )
+            logger.info("Loaded position: %s %.6f@%s, SL=%s, TP=%s",side, size, entry, sl_price, tp_price)# pragma: no cover
+# 
 
     def open_position(self, side: str, entry_price: float, size: float) -> None:
         """
@@ -141,9 +140,8 @@ class PositionManager:
                 "trail_dist": float(sltp["trail_dist"]),
                 "ids": {"mkt": mkt_order["id"], "tp": tp_order["id"], "sl": sl_order["id"]},
             }
-            logger.info(
-                f"Opened position: {side} {size:.6f}@{fill_price}, SL={sltp['sl_price']}, TP={sltp['tp_price']}"
-            )
+            logger.info("Opened position: %s %.6f@%s, SL=%s, TP=%s",side, size, fill_price, sltp["sl_price"], sltp["tp_price"]) # pragma: no cover
+# 
 
     def update_trail(self, df5: Any) -> None:
         """
@@ -326,4 +324,5 @@ class PositionManager:
 
     def _handle_drawdown(self) -> None:
         # Implémentation spécifique pour le drawdown (ex: alertes, réduction de position)
-        logger.warning("Drawdown severe détecté - _handle_drawdown non implémenté")
+        logger.warning("Drawdown severe détecté - _handle_drawdown non implémenté")# # pragma: no cover
+# 

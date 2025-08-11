@@ -387,3 +387,188 @@ def test_watchdog_rule_error_is_caught(monkeypatch, dummy_exchange, order_manage
     pm.watchdog(100.0)
     # Cleanup
     RULES.pop("failing_rule", None)
+def test_load_active_fetch_open_orders_error(monkeypatch, dummy_exchange, order_manager):
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+    # fetch_open_orders lève -> load_active doit gérer et laisser active=None
+    monkeypatch.setattr(pm.exchange, "fetch_open_orders", lambda *a, **k: (_ for _ in ()).throw(Exception("boom")))
+    pm.load_active()
+    assert pm.active is None
+
+def test_load_active_positions_error(monkeypatch, dummy_exchange, order_manager):
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+    # Simule un SL (avec stopPrice) et un TP (sans stopPrice)
+    sl_like = {"id": "1", "symbol": "BTC/USDT", "status": "open", "type": "limit", "side": "sell", "price": 99.0, "info": {"stopPrice": 99.0}}
+    tp_like = {"id": "2", "symbol": "BTC/USDT", "status": "open", "type": "limit", "side": "sell", "price": 110.0, "info": {}}
+    monkeypatch.setattr(pm.exchange, "fetch_open_orders", lambda *a, **k: [sl_like, tp_like])
+    # fetch_positions lève -> load_active doit gérer et laisser active=None
+    monkeypatch.setattr(pm.exchange, "fetch_positions", lambda *a, **k: (_ for _ in ()).throw(Exception("oops")))
+    pm.load_active()
+    assert pm.active is None
+
+def test_purge_stale_reduce_only_fetch_error(monkeypatch, dummy_exchange, order_manager):
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+    # fetch_open_orders lève -> la méthode doit logger et retourner sans exception
+    monkeypatch.setattr(pm.exchange, "fetch_open_orders", lambda *a, **k: (_ for _ in ()).throw(Exception("err")))
+    pm._purge_stale_reduce_only("sell")  # ne doit pas lever
+
+def test_purge_stale_reduce_only_cancel_error(monkeypatch, dummy_exchange, order_manager):
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+    # Ordre reduceOnly SELL
+    o = dummy_exchange.create_order("BTC/USDT", "limit", "sell", 1.0, 120.0, {"reduceOnly": True})
+    # cancel_order échoue -> on prend le chemin d'erreur (warning) sans lever
+    monkeypatch.setattr(pm.exchange, "cancel_order", lambda *a, **k: (_ for _ in ()).throw(Exception("nope")))
+    pm._purge_stale_reduce_only("sell")
+    # L'ordre reste ouvert (échec d'annulation), mais surtout on a couvert la branche except
+    assert dummy_exchange.orders[o["id"]]["status"] == "open"
+
+    # path: tests/test_position_manager.py
+# --- AJOUTS pour viser 100% position_manager.py ---
+
+def test_update_trail_no_active_returns_early(dummy_exchange, order_manager):
+    # Couvre le early-return 'if not self.active' dans update_trail
+    import pandas as pd
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+    df = pd.DataFrame({"close": [100.0]})
+    # Ne doit pas lever, juste sortir tôt
+    pm.update_trail(df)
+
+def test_load_active_only_tp_orders(monkeypatch, dummy_exchange, order_manager):
+    # Couvre la branche "pas de SL" => pas de position récupérable
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+    tp_like = {"id": "1", "symbol": "BTC/USDT", "status": "open", "type": "limit", "side": "sell", "price": 110.0, "info": {}}
+    monkeypatch.setattr(pm.exchange, "fetch_open_orders", lambda *a, **k: [tp_like])
+    pm.load_active()
+    assert pm.active is None
+
+def test_check_exit_positions_empty_path(monkeypatch, dummy_exchange, order_manager):
+    # Couvre explicitement: positions=[] -> cancel_all_open + active=None
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+    pm.active = {"side": "buy", "size": 1.0, "ids": {"sl": "x", "tp": "y"}}
+    monkeypatch.setattr(pm.exchange, "fetch_positions", lambda *a, **k: [])
+    # fetch_open_orders ne doit pas être appelé dans cette branche, mais on le laisse safe
+    monkeypatch.setattr(pm.exchange, "fetch_open_orders", lambda *a, **k: [])
+    pm.check_exit()
+    assert pm.active is None
+
+def test_open_position_uses_fill_price_from_average(monkeypatch, dummy_exchange, order_manager):
+    """Couvre la voie fill_price = order['average'] dans open_position."""
+    from execution.position_manager import PositionManager
+    monkeypatch.setattr(
+        "execution.position_manager.calculate_initial_sl_tp",
+        lambda *a, **k: {"sl_price": 90.0, "tp_price": 110.0, "trail_dist": 10.0},
+    )
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+
+    # Remplace uniquement l'ordre marché pour forcer average
+    def fake_mkt(side, size, leverage=None, params=None):
+        return {"id": "m1", "status": "closed", "average": 101.5, "price": None}
+    monkeypatch.setattr(pm.om, "place_market_order", fake_mkt)
+
+    pm.open_position("buy", entry_price=100.0, size=1.0)
+    assert pm.active is not None
+    assert pm.active["entry_price"] == 101.5  # couvre la branche average
+
+
+def test_purge_stale_reduce_only_detects_info_flag(dummy_exchange, order_manager):
+    """Couvre la détection reduceOnly via o['info']['reduceOnly'] dans _purge_stale_reduce_only."""
+    from execution.position_manager import PositionManager
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+
+    # Injecte un ordre 'open' avec le flag reduceOnly dans info
+    dummy_exchange.orders["99"] = {
+        "id": "99",
+        "symbol": "BTC/USDT",
+        "type": "limit",
+        "side": "sell",
+        "amount": 1.0,
+        "price": 120.0,
+        "params": {},            # pas de reduceOnly ici
+        "info": {"reduceOnly": True},  # le flag est ici
+        "status": "open",
+    }
+
+    pm._purge_stale_reduce_only("sell")
+    assert "99" in dummy_exchange.cancelled
+
+# path: tests/test_position_manager.py
+# --- AJOUTS pour viser 100% sur execution/position_manager.py ---
+
+def test_open_position_uses_fill_price_from_price(monkeypatch, dummy_exchange, order_manager):
+    """Couvre la branche fill_price = order['price'] (sans 'average')."""
+    from execution.position_manager import PositionManager
+    # SL/TP déterministes
+    monkeypatch.setattr(
+        "execution.position_manager.calculate_initial_sl_tp",
+        lambda *a, **k: {"sl_price": 90.0, "tp_price": 110.0, "trail_dist": 10.0},
+    )
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+
+    # ordre marché renvoie uniquement 'price' (pas 'average')
+    def fake_mkt(side, size, leverage=None, params=None):
+        return {"id": "m2", "status": "closed", "price": 102.25}
+    monkeypatch.setattr(pm.om, "place_market_order", fake_mkt)
+
+    pm.open_position("buy", entry_price=100.0, size=1.0)
+    assert pm.active is not None
+    assert pm.active["entry_price"] == 102.25  # branche `price` couverte
+
+
+def test_purge_stale_reduce_only_info_and_finally(dummy_exchange, order_manager):
+    """Couvre la voie reduceOnly via info + s'assure de la fin de routine (_finally de _emergency_exit déjà couvert)."""
+    from execution.position_manager import PositionManager
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+
+    # Injecte un ordre 'open' avec reduceOnly dans info (pas dans params)
+    dummy_exchange.orders["100"] = {
+        "id": "100",
+        "symbol": "BTC/USDT",
+        "type": "limit",
+        "side": "sell",
+        "amount": 1.0,
+        "price": 120.0,
+        "params": {},
+        "info": {"reduceOnly": True},
+        "status": "open",
+    }
+
+    pm._purge_stale_reduce_only("sell")
+    assert "100" in dummy_exchange.cancelled
+def test_open_position_uses_entry_price_fallback(monkeypatch, dummy_exchange, order_manager):
+    """Couvre la branche fill_price = entry_price (ni 'average' ni 'price' dans l'ordre marché)."""
+    from execution.position_manager import PositionManager
+    monkeypatch.setattr(
+        "execution.position_manager.calculate_initial_sl_tp",
+        lambda *a, **k: {"sl_price": 90.0, "tp_price": 110.0, "trail_dist": 10.0},
+    )
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+
+    # Ordre marché minimal: pas de 'average', pas de 'price'
+    def fake_mkt(side, size, leverage=None, params=None):
+        return {"id": "m3", "status": "closed"}
+    monkeypatch.setattr(pm.om, "place_market_order", fake_mkt)
+
+    pm.open_position("buy", entry_price=100.0, size=1.0)
+    assert pm.active is not None
+    assert pm.active["entry_price"] == 100.0  # fallback sur entry_price couvert
+
+
+def test_purge_stale_reduce_only_info_flag(dummy_exchange, order_manager):
+    """Couvre la détection reduceOnly via o['info']['reduceOnly'] et l’annulation associée."""
+    from execution.position_manager import PositionManager
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+
+    # Ordre OPEN avec reduceOnly dans info (pas dans params)
+    dummy_exchange.orders["200"] = {
+        "id": "200",
+        "symbol": "BTC/USDT",
+        "type": "limit",
+        "side": "sell",
+        "amount": 1.0,
+        "price": 120.0,
+        "params": {},                 # pas de reduceOnly ici
+        "info": {"reduceOnly": True}, # flag ici
+        "status": "open",
+    }
+
+    pm._purge_stale_reduce_only("sell")
+    assert "200" in dummy_exchange.cancelled
