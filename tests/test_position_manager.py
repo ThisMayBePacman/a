@@ -52,6 +52,12 @@ def test_open_position_invalid(monkeypatch, dummy_exchange, order_manager):
         pm.open_position("buy", entry_price=100.0, size=0.0)
 
 
+def test_opposite_invalid_raises(dummy_exchange, order_manager):
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+    with pytest.raises(ValueError):
+        pm.opposite("hold")
+
+
 def test_update_trail_no_change(monkeypatch, dummy_exchange, order_manager):
     # Setup position with known SL via dummy calc
     def dummy_calc(exchange, symbol, entry_price, side):
@@ -198,6 +204,21 @@ def test_check_exit_unprotected(monkeypatch, dummy_exchange, order_manager):
     assert contracts == 0.0
 
 
+def test_check_exit_one_protective_still_open(monkeypatch, dummy_exchange, order_manager):
+    # Cas où UNE seule protection reste ouverte => pas d'emergency_exit
+    monkeypatch.setattr(
+        "execution.position_manager.calculate_initial_sl_tp",
+        lambda *args, **kwargs: {"sl_price": 90.0, "tp_price": 110.0, "trail_dist": 10.0},
+    )
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+    pm.open_position("buy", entry_price=100.0, size=1.0)
+    ids = pm.active["ids"]
+    # Annule seulement le SL, laisse le TP ouvert
+    dummy_exchange.cancel_order(ids["sl"])
+    pm.check_exit()
+    assert pm.active is not None  # pas d'emergency_exit car TP encore présent
+
+
 def test_check_exit_fetch_errors(monkeypatch, dummy_exchange, order_manager):
     pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
     # When no active, check_exit returns early
@@ -247,6 +268,25 @@ def test_load_active_orders_but_no_contracts(monkeypatch, dummy_exchange, order_
     assert pm2.active is None
     # (les ordres existent encore mais load_active ne doit pas prétendre à une position active)
     assert ids["sl"] in dummy_exchange.orders and ids["tp"] in dummy_exchange.orders
+
+
+def test_load_active_no_orders(monkeypatch, dummy_exchange, order_manager):
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+    monkeypatch.setattr(pm.exchange, "fetch_open_orders", lambda *a, **k: [])
+    pm.load_active()
+    assert pm.active is None
+
+
+def test_load_active_only_sl_orders(monkeypatch, dummy_exchange, order_manager):
+    pm = PositionManager(dummy_exchange, "BTC/USDT", order_manager)
+    # Un seul ordre stop => pas de TP => pas de position active récupérable
+    monkeypatch.setattr(
+        pm.exchange,
+        "fetch_open_orders",
+        lambda *a, **k: [{"id": "1", "symbol": "BTC/USDT", "status": "open", "type": "limit", "side": "sell", "price": 100.0, "info": {"stopPrice": 100.0}}],
+    )
+    pm.load_active()
+    assert pm.active is None
 
 
 def test_cancel_all_open_and_purge_stale(monkeypatch, dummy_exchange, order_manager):
