@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\risk\rules.py
+# hypothesis_version: 6.137.2
+
+[0.02, 'SL breach', 'action', 'buy', 'condition', 'current_sl_price', 'max_drawdown', 'sell', 'side', 'sl_breach', 'tp_breach']

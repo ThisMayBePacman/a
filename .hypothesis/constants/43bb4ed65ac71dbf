@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\data\fetcher.py
+# hypothesis_version: 6.137.2
+
+[1000, 'apiKey', 'close', 'enableRateLimit', 'high', 'id', 'low', 'ms', 'open', 'secret', 'time', 'volume']

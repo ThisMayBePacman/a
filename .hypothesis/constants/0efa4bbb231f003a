@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\risk\sl_tp.py
+# hypothesis_version: 6.137.2
+
+[1.5, 100, '5m', 'buy', 'down', 'id', 'info', 'limit', 'limits', 'precision', 'price', 'reduceOnly', 'sell', 'sl', 'sl_price', 'step', 'stopPrice', 'tickSize', 'tp', 'tp_price', 'trail_dist', 'up']

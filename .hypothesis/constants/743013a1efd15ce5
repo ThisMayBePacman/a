@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\utils\decorators.py
+# hypothesis_version: 6.137.2
+
+['cancel_order', 'canceled', 'cancelled', 'id', 'rejected', 'status']

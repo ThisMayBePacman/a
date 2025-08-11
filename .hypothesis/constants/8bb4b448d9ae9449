@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\indicators\compute.py
+# hypothesis_version: 6.137.2
+
+['15m', 'ATR14', 'EMA21', 'EMA50', 'EMA9', 'RSI14', 'RSI7', 'Vol_SMA5', 'close', 'high', 'low', 'time', 'volume']
