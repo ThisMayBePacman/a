@@ -1,0 +1,18 @@
+ccxt>=4.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+pandas>=2.2.2
+numpy>=1.26.4
+# Pour le typage
+typing-extensions>=4.10.0
+
+# (facultatif, pour logs ou outils avancés)
+loguru>=0.7.2
+
+# (facultatif, pour la sécurité des envs)
+python-decouple>=3.8
+
+# (facultatif, pour tests unitaires)
+pytest>=8.2.1
+pytest-cov>=5.0.0
+pytest-mock
