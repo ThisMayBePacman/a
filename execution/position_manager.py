@@ -9,6 +9,8 @@ from risk.sl_tp import calculate_initial_sl_tp
 from risk.rules import RULES
 from utils.price_utils import align_price
 import ccxt
+import pandas as pd
+
 
 logger = logging.getLogger(__name__)
 
