@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\risk\rules.py
+# hypothesis_version: 6.137.2
+
+[0.0, 'PositionManager', 'TP level breached.', 'action', 'buy', 'condition', 'current_sl_price', 'drawdown', 'sell', 'side', 'sl_breach', 'tp_breach', 'tp_price']

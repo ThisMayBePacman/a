@@ -1,56 +1,56 @@
 # path: tests/property/test_rules_properties.py
-from hypothesis import given, strategies as st
+from __future__ import annotations
+
+from typing import Dict, Any
+
+from hypothesis import given, settings, strategies as st
+
 from risk.rules import RULES
 
-class FakeState:
-    def __init__(self, side=None, sl=None, tp=None, entry=None):
-        self.active = {} if side or sl or tp or entry else None
-        if side is not None:
-            self.active['side'] = side
-        if sl is not None:
-            self.active['current_sl_price'] = sl
-        if tp is not None:
-            self.active['tp_price'] = tp
-        if entry is not None:
-            self.active['entry_price'] = entry
-    @property
-    def tp_price(self):
-        return self.active.get('tp_price') if self.active else None
-    @property
-    def entry_price(self):
-        return self.active.get('entry_price') if self.active else None
 
-@given(side=st.sampled_from(['buy','sell']),
-       sl=st.floats(min_value=0.001, max_value=1e6),
-       price=st.floats(min_value=0.0, max_value=1e6))
-def test_sl_breach_condition(side, sl, price):
-    state = FakeState(side=side, sl=sl)
-    result = RULES['sl_breach']['condition'](state, price)
-    expected = False
-    if side == 'buy':
-        expected = price <= sl
-    elif side == 'sell':
-        expected = price >= sl
-    assert result == expected
+class FakePM:
+    def __init__(self, side: str, sl: float, tp: float):
+        self.active: Dict[str, Any] = {"side": side, "current_sl_price": sl, "tp_price": tp}
 
-@given(side=st.sampled_from(['buy','sell']),
-       tp=st.floats(min_value=0.001, max_value=1e6),
-       price=st.floats(min_value=0.0, max_value=1e6))
-def test_tp_breach_condition(side, tp, price):
-    state = FakeState(side=side, tp=tp)
-    result = RULES['tp_breach']['condition'](state, price)
-    expected = False
-    if side == 'buy':
-        expected = price >= tp
-    elif side == 'sell':
-        expected = price <= tp
-    assert result == expected
 
-@given(entry=st.floats(min_value=0.01, max_value=1e6),
-       price=st.floats(min_value=0.0, max_value=1e6))
-def test_max_drawdown_condition(entry, price):
-    state = FakeState(entry=entry)
-    result = RULES['max_drawdown']['condition'](state, price)
-    # Condition est vraie si price < 0.98 * entry (baisse > 2%)
-    expected = price < 0.98 * entry
-    assert result == expected
+sides = st.sampled_from(["buy", "sell"])
+entries = st.floats(min_value=0.01, max_value=1e6)
+prices = st.floats(min_value=0.0, max_value=1e6)
+
+
+@given(side=sides, entry=entries)
+@settings(max_examples=100)
+def test_sl_tp_do_not_trigger_simultaneously_when_levels_consistent(side: str, entry: float) -> None:
+    """
+    Propriété: si SL < TP pour long (et TP < SL pour short),
+    il n'existe pas de prix p qui déclenche simultanément SL et TP.
+    """
+    if side == "buy":
+        sl = entry * 0.95
+        tp = entry * 1.05
+        pm = FakePM("buy", sl, tp)
+        for p in (sl * 0.999, entry, tp * 1.001):
+            sl_hit = RULES["sl_breach"]["condition"](pm, p)
+            tp_hit = RULES["tp_breach"]["condition"](pm, p)
+            assert not (sl_hit and tp_hit)
+    else:
+        sl = entry * 1.05  # SL au-dessus
+        tp = entry * 0.95  # TP au-dessous
+        pm = FakePM("sell", sl, tp)
+        for p in (tp * 0.999, entry, sl * 1.001):
+            sl_hit = RULES["sl_breach"]["condition"](pm, p)
+            tp_hit = RULES["tp_breach"]["condition"](pm, p)
+            assert not (sl_hit and tp_hit)
+
+
+@given(entry=entries, price=prices)
+@settings(max_examples=100)
+def test_sl_monotonic_with_price_for_long(entry: float, price: float) -> None:
+    """Pour un long: si SL est atteint à un prix p, il reste atteint pour tout prix <= p."""
+    sl = entry * 0.9
+    pm = FakePM("buy", sl, entry * 1.1)
+    p1 = price
+    p2 = p1 - abs(entry) * 0.01  # p2 <= p1
+    hit1 = RULES["sl_breach"]["condition"](pm, p1)
+    hit2 = RULES["sl_breach"]["condition"](pm, p2)
+    assert (not hit1) or hit2

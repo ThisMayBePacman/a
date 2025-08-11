@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\config.py
+# hypothesis_version: 6.137.2
+
+[0.5, 100, '15m', '5m', 'API_KEY', 'API_SECRET', 'M15', 'M5', 'PF_ETHUSD', 'donnees/trading.db']
