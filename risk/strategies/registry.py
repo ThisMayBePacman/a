@@ -9,7 +9,12 @@ from .trailing import (
     TrailingSLOnlyConfig,
     TrailingSLAndTPConfig,
 )
-
+def make_from_name(name: str, **kwargs):
+    """
+    Compat helper pour le CLI: construit une stratégie à partir d'un nom
+    (ex: 'trailing_sl_only' ou 'trailing_sl_and_tp') + éventuels kwargs (theta, rho).
+    """
+    return make_strategy(name, **kwargs)
 def make_strategy(cfg_or_name: Any = "trailing_sl_only", **kwargs) -> TrailingSLOnly | TrailingSLAndTP:
     """
     Fabrique une stratégie à partir :
