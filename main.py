@@ -64,7 +64,7 @@ def main():
     if args.rho is not None:
         params["rho"] = args.rho
 
-    strategy = make_from_name(strategy_name, params)
+    strategy = make_from_name(strategy_name, **(params or {}))
     if strategy is None:
         logger.info("> Stratégie: legacy (SL-only)")
     else:

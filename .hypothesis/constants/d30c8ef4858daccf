@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\main.py
+# hypothesis_version: 6.137.2
+
+['%Y-%m-%d %H:%M:%S', '--rho', '--strategy', '--theta', 'Bot trading', 'M15', 'M5', '__main__', 'buy', 'legacy', 'logs/bot.log', 'long', 'none', 'rho', 'sell', 'short', 'theta', 'trailing_sl_and_tp', 'trailing_sl_only']
