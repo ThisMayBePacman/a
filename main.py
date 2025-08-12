@@ -10,6 +10,9 @@ from execution.position_manager import PositionManager
 from config import SYMBOL, TIMEFRAMES, LOOKBACK, POLL_INTERVAL, INVESTMENT_USD, LEVERAGE, STRATEGY, STRATEGY_PARAMS
 import argparse
 from risk.strategies.registry import make_from_name
+import random
+from typing import Callable, TypeVar
+import ccxt
 
 
 # ========== LOGGER ==========
@@ -23,6 +26,33 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
+
+RETRYABLE_EXC = (
+    ccxt.NetworkError,
+    ccxt.RequestTimeout,
+    ccxt.DDoSProtection,
+    ccxt.ExchangeNotAvailable,
+    )
+
+def with_retries(fn: Callable[[], T], *, max_retries: int = 5, base_delay: float = 1.0, max_delay: float = 30.0) -> T:
+    """Exécute fn avec retries exponentiels + jitter, ne lève que si tous les essais échouent."""
+    attempt = 0
+    while True:
+        try:
+            return fn()
+        except RETRYABLE_EXC as e:
+            attempt += 1
+            if attempt > max_retries:
+                logging.error("API temporairement indisponible après %d tentatives: %s", attempt - 1, e)
+                raise
+            backoff = min(base_delay * (2 ** (attempt - 1)), max_delay)
+            # jitter ±20%
+            jitter = backoff * (0.2 * (2 * random.random() - 1))
+            sleep_s = max(0.0, backoff + jitter)
+            logging.warning("Erreur réseau (%s). Nouvelle tentative dans %.2fs (essai %d/%d)...", type(e).__name__, sleep_s, attempt, max_retries)
+            time.sleep(sleep_s)
+
 def _parse_args():
     parser = argparse.ArgumentParser(description="Bot trading")
     parser.add_argument(
@@ -76,13 +106,14 @@ def main():
     pm.load_active()
     
     # Chargement historique
+    # Chargement initial résilient (réseau)
     _df_m15 = compute_indicators(
-        fetch_ohlcv(exchange, ccxt_symbol, TIMEFRAMES['M15'], LOOKBACK),
-        TIMEFRAMES['M15']
+        with_retries(lambda: fetch_ohlcv(exchange, ccxt_symbol, TIMEFRAMES['M15'], LOOKBACK)),
+        TIMEFRAMES['M15'],
     )
     _df_m5 = compute_indicators(
-        fetch_ohlcv(exchange, ccxt_symbol, TIMEFRAMES['M5'], LOOKBACK),
-        TIMEFRAMES['M5']
+        with_retries(lambda: fetch_ohlcv(exchange, ccxt_symbol, TIMEFRAMES['M5'], LOOKBACK)),
+        TIMEFRAMES['M5'],
     )
     logger.info("Initialisation des données terminée.")
 
@@ -92,7 +123,11 @@ def main():
         size = INVESTMENT_USD * LEVERAGE / _df_m5.close.iloc[-1]
      
         # Mise à jour M5
-        new5 = fetch_ohlcv(exchange, ccxt_symbol, TIMEFRAMES['M5'], LOOKBACK)
+        try:
+            new5 = with_retries(lambda: fetch_ohlcv(exchange, ccxt_symbol, TIMEFRAMES['M5'], LOOKBACK), max_retries=3)
+        except RETRYABLE_EXC:
+            logger.warning("Skip tick: données M5 non rafraîchies (réseau).")
+            continue
         if new5.time.iloc[-1] != _df_m5.time.iloc[-1]:
             _df_m5 = compute_indicators(new5, TIMEFRAMES['M5'])
             current_price = _df_m5.close.iloc[-1]
@@ -115,7 +150,11 @@ def main():
             pm.check_exit()
 
         # Mise à jour M15
-        new15 = fetch_ohlcv(exchange, ccxt_symbol, TIMEFRAMES['M15'], LOOKBACK)
+        try:
+            new15 = with_retries(lambda: fetch_ohlcv(exchange, ccxt_symbol, TIMEFRAMES['M15'], LOOKBACK), max_retries=3)
+        except RETRYABLE_EXC:
+            logger.info("Impossible de rafraîchir M15 sur ce tour ; on réessaiera au suivant.")
+            continue
         if new15.time.iloc[-1] != _df_m15.time.iloc[-1]:
             _df_m15 = compute_indicators(new15, TIMEFRAMES['M15'])
 
