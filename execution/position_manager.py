@@ -146,63 +146,51 @@ class PositionManager:
                 raise RuntimeError("Failed to open position safely, position closed") from e
 
     def update_trail(self, df: pd.DataFrame) -> None:
-        # -- early exit si flat --
         if not self.active:
             return
-
-        # --- snapshot pour éviter de relire self.active si ça bouge entre-temps ---
-        active = self.active
-        side = active["side"]                # "long" | "short"
         price = float(df["close"].iloc[-1])
-        trail = active["trail_dist"]
-        old_sl = active.get("current_sl_price")
-        old_tp = active.get("tp_price")
+        side = self.active["side"]
+        trail = self.active["trail_dist"]
+        old_sl = self.active["current_sl_price"]
+        old_tp = self.active.get("tp_price")
 
-        # --------- MODE LEGACY (sans stratégie) ----------
+        # Sans stratégie : legacy trailing
         if not self.strategy:
-            if side == "long":
+            if side == "buy":
                 new_sl = align_price(price - trail, TICK_SIZE, mode="down")
-                # monotonicité: on ne descend jamais un SL long
-                if old_sl is not None and new_sl <= old_sl:
+                if new_sl <= old_sl:
                     return
-            else:  # short
+            else:
                 new_sl = align_price(price + trail, TICK_SIZE, mode="up")
-                # monotonicité: on ne remonte jamais un SL short
-                if old_sl is not None and new_sl >= old_sl:
+                if new_sl >= old_sl:
                     return
-
-            # re-check: encore en position ?
-            if not self.active:
-                return
             self._replace_sl(new_sl)
             return
 
-        # --------- MODE STRATÉGIE ----------
+        # Avec stratégie
         snap = PositionSnapshot(
-            entry_price=active["entry_price"],
+            entry_price=self.active["entry_price"],
             current_price=price,
-            qty_open=active.get("size", 0.0),
-            qty_remaining=active.get("qty_remaining", active.get("size", 0.0)),
-            sl_current=active.get("current_sl_price"),
-            tp_current=active.get("tp_price"),
-            tp_initial=active.get("tp_initial"),
+            qty_open=self.active.get("size", 0.0),
+            qty_remaining=self.active.get("qty_remaining", self.active.get("size", 0.0)),
+            sl_current=self.active.get("current_sl_price"),
+            tp_current=self.active.get("tp_price"),
+            tp_initial=self.active.get("tp_initial"),
             trail_dist=trail,
         )
         ctx = StrategyContext(symbol=self.symbol, side=side, tick_size=TICK_SIZE)
         desired = self.strategy.compute_targets(snap, ctx)
 
-        # --- SL monotone ---
-        if desired.sl_price is not None and old_sl is not None:
-            if (side == "long" and desired.sl_price > old_sl) or \
-            (side == "short" and desired.sl_price < old_sl):
-                if not self.active:
-                    return
+        # SL monotone
+        if side == "buy":
+            if desired.sl_price is not None and desired.sl_price > old_sl:
+                self._replace_sl(desired.sl_price)
+        else:
+            if desired.sl_price is not None and desired.sl_price < old_sl:
                 self._replace_sl(desired.sl_price)
 
-        # --- TP si changement ---
+        # TP si changement
         if desired.tp_price is not None and old_tp is not None and desired.tp_price != old_tp:
-            if not self.active:
-                return
             self._replace_tp(desired.tp_price)
 
     def check_exit(self) -> None:
@@ -322,81 +310,35 @@ class PositionManager:
 
     # Helpers internes
     def _replace_sl(self, new_sl: float) -> None:
-        # --- snapshot & garde ---
-        active = self.active
-        if not active or not active["ids"].get("sl"):
-            return
-        old_sl_id = active["ids"]["sl"]
-        side = self.opposite(active["side"])
-        size = active["size"]
-
-        # --- cancel idempotent via OrderManager ---
         try:
-            self.om.cancel_order(old_sl_id)
-        except Exception as e:
-            msg = str(e).lower()
-            benign = any(s in msg for s in ("notfound", "unknown order", "already canceled", "not open"))
-            if not benign:
-                logger.error(f"cancel SL unexpected error {old_sl_id}: {e}")
-                self._emergency_exit("cancel SL failed")
-                return
-            logger.info(f"Cancel SL benign (already gone): {old_sl_id} -> continue")
-
-        # --- recheck état avant de replacer ---
-        if self.active is None:
+            self.exchange.cancel_order(self.active["ids"]["sl"], self.symbol)
+        except (ccxt.BaseError, ccxt.OrderNotFound) as e:
+            logger.error(f"cancel_order failed for SL {self.active['ids'].get('sl')}: {e}")
+            self._emergency_exit("cancel SL failed")
             return
-        # si un autre cycle a déjà mis à jour l'id, ne rien faire
-        if self.active["ids"].get("sl") not in (None, old_sl_id):
-            return
-
+        side = self.opposite(self.active["side"])
+        size = self.active["size"]
         order = self.om.place_stop_limit_order(
-            side=side,
-            size=size,
-            price=new_sl,
+            side=side, size=size, price=new_sl,
             params={"stopPrice": new_sl, "reduceOnly": True},
         )
-        # sécuriser l'accès
-        if self.active is not None:
-            self.active["ids"]["sl"] = order.get("id")
-            self.active["current_sl_price"] = new_sl
-
+        self.active["ids"]["sl"] = order["id"]
+        self.active["current_sl_price"] = new_sl
 
     def _replace_tp(self, new_tp: float) -> None:
-        # --- snapshot & garde ---
-        active = self.active
-        if not active or not active["ids"].get("tp"):
-            return
-        old_tp_id = active["ids"]["tp"]
-        side = self.opposite(active["side"])
-        size = active["size"]
-
-        # --- cancel idempotent via OrderManager ---
         try:
-            self.om.cancel_order(old_tp_id)
-        except Exception as e:
-            msg = str(e).lower()
-            benign = any(s in msg for s in ("notfound", "unknown order", "already canceled", "not open"))
-            if not benign:
-                logger.error(f"cancel TP unexpected error {old_tp_id}: {e}")
-                self._emergency_exit("cancel TP failed")
-                return
-            logger.info(f"Cancel TP benign (already gone): {old_tp_id} -> continue")
-
-        # --- recheck état avant de replacer ---
-        if self.active is None:
+            self.exchange.cancel_order(self.active["ids"]["tp"], self.symbol)
+        except (ccxt.BaseError, ccxt.OrderNotFound) as e:
+            logger.error(f"cancel_order failed for TP {self.active['ids'].get('tp')}: {e}")
+            self._emergency_exit("cancel TP failed")
             return
-        if self.active["ids"].get("tp") not in (None, old_tp_id):
-            return
-
+        side = self.opposite(self.active["side"])
+        size = self.active["size"]
         order = self.om.place_limit_order(
-            side=side,
-            size=size,
-            price=new_tp,
-            params={"reduceOnly": True},
+            side=side, size=size, price=new_tp, params={"reduceOnly": True}
         )
-        if self.active is not None:
-            self.active["ids"]["tp"] = order.get("id")
-            self.active["tp_price"] = new_tp
-            
+        self.active["ids"]["tp"] = order["id"]
+        self.active["tp_price"] = new_tp
+
     def _handle_drawdown(self) -> None:
         logger.warning("Drawdown severe détecté - _handle_drawdown non implémenté")  # pragma: no cover

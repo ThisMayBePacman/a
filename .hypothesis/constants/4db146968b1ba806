@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\execution\position_manager.py
+# hypothesis_version: 6.137.2
+
+[0.0, 'action', 'already canceled', 'average', 'buy', 'cancel SL failed', 'cancel TP failed', 'close', 'closing', 'condition', 'contracts', 'current_sl_price', 'down', 'entryPrice', 'entry_price', 'id', 'ids', 'info', 'long', 'mkt', 'not open', 'notfound', 'params', 'price', 'qty_remaining', 'reduceOnly', 'sell', 'short', 'side', 'size', 'sl', 'sl_price', 'stopPrice', 'symbol', 'tp', 'tp_initial', 'tp_price', 'trail_dist', 'unknown order', 'up']

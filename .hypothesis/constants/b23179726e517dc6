@@ -1,0 +1,4 @@
+# file: C:\Users\Igor\Desktop\a\execution\order_manager.py
+# hypothesis_version: 6.137.2
+
+['already canceled', 'buy', 'canceled', 'id', 'leverage', 'limit', 'market', 'not found', 'not open', 'notfound', 'sell', 'status', 'stopPrice', 'unknown order']

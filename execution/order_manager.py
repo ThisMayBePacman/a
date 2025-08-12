@@ -6,12 +6,6 @@ from utils.decorators import verify_order
 
 logger = logging.getLogger(__name__)
 
-# CCXT change parfois l’emplacement de l’exception selon les versions
-try:
-    from ccxt.base.errors import OrderNotFound, InvalidOrder
-except Exception:  # fallback large si la structure change
-    class OrderNotFound(Exception): ...
-    class InvalidOrder(Exception): ...
 
 class OrderManager:
     """
@@ -177,40 +171,20 @@ class OrderManager:
     @verify_order
     def cancel_order(self, order_id: str) -> Dict[str, Any]:
         """
-        Annule un ordre existant via son ID, de manière idempotente.
-        Si l'ordre est déjà exécuté/annulé côté exchange, on traite cela comme un succès ("canceled").
+        Annule un ordre existant via son ID.
+
+        Args:
+            order_id: Identifiant de l'ordre à annuler.
+
+        Returns:
+            Résultat de l'annulation retourné par l'exchange.
+
+        Raises:
+            ValueError: Si `order_id` n'est pas une chaîne non vide.
         """
         if not order_id or not isinstance(order_id, str):
             raise ValueError("order_id must be a non-empty string")
-
         logger.info("Cancelling order: id=%s", order_id)
-
-        try:
-            result = self.exchange.cancel_order(order_id, self.symbol)
-            # CCXT peut renvoyer {'id': ..., 'status': 'canceled'} ou similaire
-            logger.info("Cancel result: id=%s, status=%s", result.get("id"), result.get("status"))
-            return result
-
-        except OrderNotFound as e:
-            # Cas normal si le TP a été rempli et que l'exchange a auto‑annulé le SL reduceOnly
-            logger.info("Cancel benign (already gone): id=%s, reason=%s", order_id, e)
-            return {"id": order_id, "status": "canceled"}
-
-        except InvalidOrder as e:
-            # Certains exchanges renvoient InvalidOrder quand l'ordre n'est plus ouvert
-            msg = str(e).lower()
-            if "not found" in msg or "unknown order" in msg or "not open" in msg:
-                logger.info("Cancel benign (invalid/not open): id=%s, reason=%s", order_id, e)
-                return {"id": order_id, "status": "canceled"}
-            logger.error("Cancel unexpected InvalidOrder: id=%s, error=%s", order_id, e)
-            raise
-
-        except Exception as e:
-            # Dernier filet : tolère aussi quelques messages fréquents typiques
-            msg = str(e).lower()
-            benign = any(s in msg for s in ["notfound", "unknown order", "already canceled", "not open"])
-            if benign:
-                logger.info("Cancel benign (generic): id=%s, reason=%s", order_id, e)
-                return {"id": order_id, "status": "canceled"}
-            logger.error("Cancel unexpected error: id=%s, error=%s", order_id, e)
-            raise
+        result = self.exchange.cancel_order(order_id, self.symbol)
+        logger.info("Cancel result: id=%s, status=%s", result.get("id"), result.get("status"))
+        return result
